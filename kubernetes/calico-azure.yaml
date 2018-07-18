@@ -4,12 +4,120 @@
 #   calico/node:v3.1.3
 #   calico/cni:v3.1.3
 
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: calico-node
+  namespace: kube-system
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
+---
+
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: calico-node
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups: [""]
+    resources:
+      - pods/status
+    verbs:
+      - update
+  - apiGroups: [""]
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+  - apiGroups: [""]
+    resources:
+      - services
+    verbs:
+      - get
+  - apiGroups: [""]
+    resources:
+      - endpoints
+    verbs:
+      - get
+  - apiGroups: [""]
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - update
+      - watch
+  - apiGroups: ["extensions"]
+    resources:
+      - networkpolicies
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - networkpolicies
+    verbs:
+      - watch
+      - list
+  - apiGroups: ["crd.projectcalico.org"]
+    resources:
+      - globalfelixconfigs
+      - felixconfigurations
+      - bgppeers
+      - globalbgpconfigs
+      - bgpconfigurations
+      - ippools
+      - globalnetworkpolicies
+      - globalnetworksets
+      - networkpolicies
+      - clusterinformations
+      - hostendpoints
+    verbs:
+      - create
+      - get
+      - list
+      - update
+      - watch
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  name: calico-node
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: calico-node
+subjects:
+- kind: ServiceAccount
+  name: calico-node
+  namespace: kube-system
+
+---
+
 # This ConfigMap is used to configure a self-hosted Calico installation.
 kind: ConfigMap
 apiVersion: v1
 metadata:
   name: calico-config
   namespace: kube-system
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 data:
   # To enable Typha, set this to "calico-typha" *and* set a non-zero value for Typha replicas
   # below.  We recommend using Typha if you have more than 50 nodes. Above 100 nodes it is
@@ -29,14 +137,14 @@ data:
           "nodename": "__KUBERNETES_NODE_NAME__",
           "mtu": 1500,
           "ipam": {
-            "type": "host-local",
-            "subnet": "usePodCidr"
+              "type": "host-local",
+              "subnet": "usePodCidr"
           },
           "policy": {
-            "type": "k8s"
+              "type": "k8s"
           },
           "kubernetes": {
-            "kubeconfig": "__KUBECONFIG_FILEPATH__"
+              "kubeconfig": "__KUBECONFIG_FILEPATH__"
           }
         },
         {
@@ -59,6 +167,7 @@ metadata:
   namespace: kube-system
   labels:
     k8s-app: calico-typha
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
   ports:
     - port: 5473
@@ -79,6 +188,7 @@ metadata:
   namespace: kube-system
   labels:
     k8s-app: calico-typha
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
   # Number of Typha replicas.  To enable Typha, set this to a non-zero value *and* set the
   # typha_service_name variable in the calico-config ConfigMap above.
@@ -92,6 +202,7 @@ spec:
     metadata:
       labels:
         k8s-app: calico-typha
+        addonmanager.kubernetes.io/mode: "EnsureExists"
       annotations:
         # This, along with the CriticalAddonsOnly toleration below, marks the pod as a critical
         # add-on, ensuring it gets priority scheduling and that its resources are reserved
@@ -100,9 +211,8 @@ spec:
     spec:
       hostNetwork: true
       tolerations:
-        # Mark the pod as a critical add-on for rescheduling.
-        - key: CriticalAddonsOnly
-          operator: Exists
+      - key: CriticalAddonsOnly
+        operator: Exists
       # Since Calico can't network a pod until Typha is up, we need to run Typha itself
       # as a host-networked pod.
       serviceAccountName: calico-node
@@ -153,180 +263,188 @@ spec:
 # This manifest installs the calico/node container, as well
 # as the Calico CNI plugins and network config on
 # each master and worker node in a Kubernetes cluster.
-apiVersion: extensions/v1beta1
 kind: DaemonSet
+apiVersion: extensions/v1beta1
 metadata:
-  labels:
-    addonmanager.kubernetes.io/mode: EnsureExists
-    k8s-app: calico-node
   name: calico-node
   namespace: kube-system
+  labels:
+    k8s-app: calico-node
+    # github.com/kubernetes/kubernetes/tree/master/cluster/addons/addon-manager
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
-  revisionHistoryLimit: 10
   selector:
     matchLabels:
       k8s-app: calico-node
-  template:
-    metadata:
-      annotations:
-        scheduler.alpha.kubernetes.io/critical-pod: ""
-      creationTimestamp: null
-      labels:
-        k8s-app: calico-node
-    spec:
-      containers:
-      - env:
-        - name: DATASTORE_TYPE
-          value: kubernetes
-        - name: FELIX_LOGSEVERITYSCREEN
-          value: info
-        - name: CALICO_NETWORKING_BACKEND
-          value: none
-        - name: CLUSTER_TYPE
-          value: k8s
-        - name: CALICO_DISABLE_FILE_LOGGING
-          value: "true"
-        - name: FELIX_DEFAULTENDPOINTTOHOSTACTION
-          value: ACCEPT
-        - name: FELIX_IPV6SUPPORT
-          value: "false"
-        - name: WAIT_FOR_DATASTORE
-          value: "true"
-        - name: CALICO_IPV4POOL_CIDR
-          value: 10.244.0.0/16
-        - name: CALICO_IPV4POOL_IPIP
-          value: "off"
-        - name: FELIX_IPTABLESREFRESHINTERVAL
-          value: "60"
-        - name: FELIX_TYPHAK8SSERVICENAME
-          valueFrom:
-            configMapKeyRef:
-              key: typha_service_name
-              name: calico-config
-        - name: NODENAME
-          valueFrom:
-            fieldRef:
-              apiVersion: v1
-              fieldPath: spec.nodeName
-        - name: FELIX_HEALTHENABLED
-          value: "true"
-        - name: FELIX_IPINIPENABLED
-          value: "false"
-        image: quay.io/calico/node:v3.1.3
-        imagePullPolicy: IfNotPresent
-        livenessProbe:
-          failureThreshold: 6
-          httpGet:
-            path: /liveness
-            port: 9099
-            scheme: HTTP
-          initialDelaySeconds: 10
-          periodSeconds: 10
-          successThreshold: 1
-          timeoutSeconds: 1
-        name: calico-node
-        readinessProbe:
-          failureThreshold: 3
-          httpGet:
-            path: /readiness
-            port: 9099
-            scheme: HTTP
-          periodSeconds: 10
-          successThreshold: 1
-          timeoutSeconds: 1
-        resources:
-          requests:
-            cpu: 250m
-        securityContext:
-          privileged: true
-        terminationMessagePath: /dev/termination-log
-        terminationMessagePolicy: File
-        volumeMounts:
-        - mountPath: /lib/modules
-          name: lib-modules
-          readOnly: true
-        - mountPath: /var/run/calico
-          name: var-run-calico
-        - mountPath: /var/lib/calico
-          name: var-lib-calico
-      - command:
-        - /install-cni.sh
-        env:
-        - name: CNI_CONF_NAME
-          value: 10-calico.conflist
-        - name: CNI_NETWORK_CONFIG
-          valueFrom:
-            configMapKeyRef:
-              key: cni_network_config
-              name: calico-config
-        - name: KUBERNETES_NODE_NAME
-          valueFrom:
-            fieldRef:
-              apiVersion: v1
-              fieldPath: spec.nodeName
-        image: quay.io/calico/cni:v3.1.3
-        imagePullPolicy: IfNotPresent
-        name: install-cni
-        resources: {}
-        terminationMessagePath: /dev/termination-log
-        terminationMessagePolicy: File
-        volumeMounts:
-        - mountPath: /host/opt/cni/bin
-          name: cni-bin-dir
-        - mountPath: /host/etc/cni/net.d
-          name: cni-net-dir
-      dnsPolicy: ClusterFirst
-      hostNetwork: true
-      restartPolicy: Always
-      schedulerName: default-scheduler
-      securityContext: {}
-      serviceAccount: calico-node
-      serviceAccountName: calico-node
-      terminationGracePeriodSeconds: 0
-      tolerations:
-      - effect: NoSchedule
-        key: node-role.kubernetes.io/master
-        operator: Equal
-        value: "true"
-      - key: CriticalAddonsOnly
-        operator: Exists
-      - effect: NoExecute
-        operator: Exists
-      volumes:
-      - hostPath:
-          path: /lib/modules
-          type: ""
-        name: lib-modules
-      - hostPath:
-          path: /var/run/calico
-          type: ""
-        name: var-run-calico
-      - hostPath:
-          path: /var/lib/calico
-          type: ""
-        name: var-lib-calico
-      - hostPath:
-          path: /opt/cni/bin
-          type: ""
-        name: cni-bin-dir
-      - hostPath:
-          path: /etc/cni/net.d
-          type: ""
-        name: cni-net-dir
-  templateGeneration: 1
   updateStrategy:
+    type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 1
-    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        k8s-app: calico-node
+      annotations:
+        # This, along with the CriticalAddonsOnly toleration below,
+        # marks the pod as a critical add-on, ensuring it gets
+        # priority scheduling and that its resources are reserved
+        # if it ever gets evicted. 
+        # Deprecated in 1.10, Removed in 1.11. kubernetes.io/docs/tasks/administer-cluster/guaranteed-scheduling-critical-addon-pods 
+        scheduler.alpha.kubernetes.io/critical-pod: ''  
+    spec:
+      hostNetwork: true
+      tolerations:
+        # Allow the pod to run on the master.  This is required for
+        # the master to communicate with pods.
+        - key: node-role.kubernetes.io/master
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+        # Mark the pod as a critical add-on for rescheduling.
+        - key: CriticalAddonsOnly
+          operator: Exists
+        - effect: NoExecute
+          operator: Exists
+      serviceAccountName: calico-node
+      # Minimize downtime during a rolling upgrade or deletion; tell Kubernetes to do a "force
+      # deletion": https://kubernetes.io/docs/concepts/workloads/pods/pod/#termination-of-pods.
+      terminationGracePeriodSeconds: 0
+      containers:
+        # Runs calico/node container on each Kubernetes node.  This
+        # container programs network policy and routes on each
+        # host.
+        - name: calico-node
+          image: quay.io/calico/node:v3.1.3
+          env:
+            # Use Kubernetes API as the backing datastore.
+            - name: DATASTORE_TYPE
+              value: "kubernetes"
+            # Enable felix info logging.
+            - name: FELIX_LOGSEVERITYSCREEN
+              value: "info"
+            # Don't enable BGP.
+            - name: CALICO_NETWORKING_BACKEND
+              value: "none"
+            # Cluster type to identify the deployment type
+            - name: CLUSTER_TYPE
+              value: "k8s"
+            # Disable file logging so `kubectl logs` works.
+            - name: CALICO_DISABLE_FILE_LOGGING
+              value: "true"
+            # Set Felix endpoint to host default action to ACCEPT.
+            - name: FELIX_DEFAULTENDPOINTTOHOSTACTION
+              value: "ACCEPT"
+            # Disable IPV6 on Kubernetes.
+            - name: FELIX_IPV6SUPPORT
+              value: "false"
+            # Wait for the datastore.
+            - name: WAIT_FOR_DATASTORE
+              value: "true"
+            # The Calico IPv4 pool to use.  This should match `--cluster-cidr`
+            - name: CALICO_IPV4POOL_CIDR
+              value: "10.244.0.0/16"
+            # Enable IPIP
+            - name: CALICO_IPV4POOL_IPIP
+              value: "off"
+            - name: FELIX_IPTABLESREFRESHINTERVAL
+              value: "60"
+            # Typha support: controlled by the ConfigMap.
+            - name: FELIX_TYPHAK8SSERVICENAME
+              valueFrom:
+                configMapKeyRef:
+                  name: calico-config
+                  key: typha_service_name
+            # Set based on the k8s node name.
+            - name: NODENAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: FELIX_HEALTHENABLED
+              value: "true"
+            - name: FELIX_IPINIPENABLED
+              value: "false"
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: 250m
+          livenessProbe:
+            httpGet:
+              path: /liveness
+              port: 9099
+            periodSeconds: 10
+            initialDelaySeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: 9099
+            periodSeconds: 10
+          volumeMounts:
+            - mountPath: /lib/modules
+              name: lib-modules
+              readOnly: true
+            - mountPath: /var/run/calico
+              name: var-run-calico
+              readOnly: false
+            - mountPath: /var/lib/calico
+              name: var-lib-calico
+              readOnly: false
+        # This container installs the Calico CNI binaries
+        # and CNI network config file on each node.
+        - name: install-cni
+          image: quay.io/calico/cni:v3.1.3
+          command: ["/install-cni.sh"]
+          env:
+            # Name of the CNI config file to create.
+            - name: CNI_CONF_NAME
+              value: "10-calico.conflist"
+            # The CNI network config to install on each node.
+            - name: CNI_NETWORK_CONFIG
+              valueFrom:
+                configMapKeyRef:
+                  name: calico-config
+                  key: cni_network_config
+            # Set the hostname based on the k8s node name.
+            - name: KUBERNETES_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - mountPath: /host/opt/cni/bin
+              name: cni-bin-dir
+            - mountPath: /host/etc/cni/net.d
+              name: cni-net-dir
+      volumes:
+        # Used by calico/node.
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+        - name: var-run-calico
+          hostPath:
+            path: /var/run/calico
+        - name: var-lib-calico
+          hostPath:
+            path: /var/lib/calico
+        # Used to install CNI.
+        - name: cni-bin-dir
+          hostPath:
+            path: /opt/cni/bin
+        - name: cni-net-dir
+          hostPath:
+            path: /etc/cni/net.d
 
 # Create all the CustomResourceDefinitions needed for
-# Calico policy and networking mode.
+# Calico policy-only mode.
 ---
 
 apiVersion: apiextensions.k8s.io/v1beta1
+description: Calico Felix Configuration
 kind: CustomResourceDefinition
 metadata:
-   name: felixconfigurations.crd.projectcalico.org
+  name: felixconfigurations.crd.projectcalico.org
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
   scope: Cluster
   group: crd.projectcalico.org
@@ -339,24 +457,12 @@ spec:
 ---
 
 apiVersion: apiextensions.k8s.io/v1beta1
-kind: CustomResourceDefinition
-metadata:
-  name: bgppeers.crd.projectcalico.org
-spec:
-  scope: Cluster
-  group: crd.projectcalico.org
-  version: v1
-  names:
-    kind: BGPPeer
-    plural: bgppeers
-    singular: bgppeer
-
----
-
-apiVersion: apiextensions.k8s.io/v1beta1
+description: Calico BGP Configuration
 kind: CustomResourceDefinition
 metadata:
   name: bgpconfigurations.crd.projectcalico.org
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
   scope: Cluster
   group: crd.projectcalico.org
@@ -369,9 +475,12 @@ spec:
 ---
 
 apiVersion: apiextensions.k8s.io/v1beta1
+description: Calico IP Pools
 kind: CustomResourceDefinition
 metadata:
   name: ippools.crd.projectcalico.org
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
   scope: Cluster
   group: crd.projectcalico.org
@@ -384,9 +493,12 @@ spec:
 ---
 
 apiVersion: apiextensions.k8s.io/v1beta1
+description: Calico Host Endpoints
 kind: CustomResourceDefinition
 metadata:
   name: hostendpoints.crd.projectcalico.org
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
   scope: Cluster
   group: crd.projectcalico.org
@@ -399,9 +511,12 @@ spec:
 ---
 
 apiVersion: apiextensions.k8s.io/v1beta1
+description: Calico Cluster Information
 kind: CustomResourceDefinition
 metadata:
   name: clusterinformations.crd.projectcalico.org
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
   scope: Cluster
   group: crd.projectcalico.org
@@ -414,9 +529,12 @@ spec:
 ---
 
 apiVersion: apiextensions.k8s.io/v1beta1
+description: Calico Global Network Policies
 kind: CustomResourceDefinition
 metadata:
   name: globalnetworkpolicies.crd.projectcalico.org
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
   scope: Cluster
   group: crd.projectcalico.org
@@ -429,9 +547,12 @@ spec:
 ---
 
 apiVersion: apiextensions.k8s.io/v1beta1
+description: Calico Global Network Sets
 kind: CustomResourceDefinition
 metadata:
   name: globalnetworksets.crd.projectcalico.org
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
   scope: Cluster
   group: crd.projectcalico.org
@@ -444,9 +565,12 @@ spec:
 ---
 
 apiVersion: apiextensions.k8s.io/v1beta1
+description: Calico Network Policies
 kind: CustomResourceDefinition
 metadata:
   name: networkpolicies.crd.projectcalico.org
+  labels:
+    addonmanager.kubernetes.io/mode: "EnsureExists"
 spec:
   scope: Namespaced
   group: crd.projectcalico.org
@@ -455,11 +579,3 @@ spec:
     kind: NetworkPolicy
     plural: networkpolicies
     singular: networkpolicy
-
----
-
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: calico-node
-  namespace: kube-system
